@@ -1,0 +1,91 @@
+syntax = "proto3";
+package tacticalmmo.v1;
+
+// ===================== Cliente -> Servidor (intenções) =====================
+message ClientMessage {
+  uint32 seq = 1;                    // para ack e detecção de replay
+  oneof cmd {
+    MoveOrder        move      = 10;
+    AttackOrder      attack    = 11;
+    BuildOrder       build     = 12;
+    UpgradeOrder     upgrade   = 13;
+    ProduceOrder     produce   = 14;
+    AllianceAction   alliance  = 15;
+    ChatMessage      chat      = 16;
+    CollectSalvage   salvage   = 17;
+  }
+}
+
+message Vec2 { float x = 1; float y = 2; }
+
+message MoveOrder    { repeated uint32 unit_ids = 1; Vec2 target = 2; bool attack_move = 3; }
+message AttackOrder  { repeated uint32 unit_ids = 1; uint32 target_id = 2; }
+message BuildOrder   { string kind = 1; Vec2 pos = 2; }
+message UpgradeOrder { uint64 structure_id = 1; }
+message ProduceOrder { uint64 structure_id = 1; string unit_kind = 2; uint32 count = 3; }
+message AllianceAction {
+  enum Kind { PROPOSE = 0; ACCEPT = 1; BETRAY = 2; LEAVE = 3; }
+  Kind kind = 1; string target_player = 2;
+}
+message ChatMessage    { string channel = 1; string text = 2; }
+message CollectSalvage { repeated uint32 unit_ids = 1; uint32 wreck_id = 2; }
+
+// ===================== Servidor -> Cliente (estado visível) =====================
+message ServerMessage {
+  uint32 tick = 1;
+  uint32 ack_seq = 2;
+  oneof msg {
+    WorldDelta      delta      = 10;
+    WalletUpdate    wallet     = 11;
+    AllianceUpdate  alliance   = 12;
+    SystemNotice    notice     = 13;  // inclui "Você recebeu X do Admin", "Você foi congelado"
+    CommandRejected rejected   = 14;
+  }
+}
+
+message EntityState {
+  uint32 id = 1;
+  string owner_id = 2;
+  string kind = 3;
+  uint32 qx = 4;                     // posição quantizada (16 bits dentro do setor)
+  uint32 qy = 5;
+  uint32 hp = 6;
+  string skin_id = 7;                // SÓ renderização
+  bool   traitor_mark = 8;
+  bool   frozen = 9;
+}
+
+message WorldDelta {
+  int32 sector_x = 1; int32 sector_y = 2;
+  repeated EntityState upserts = 3;  // só o que é visível e mudou
+  repeated uint32 removed = 4;       // saiu da visão ou foi destruído
+}
+
+message WalletUpdate { map<string, int64> balances = 1; }
+message AllianceUpdate { uint64 id = 1; string state = 2; repeated string members = 3; int64 friendly_fire_at_ms = 4; }
+message SystemNotice { string code = 1; string text = 2; }
+message CommandRejected { uint32 seq = 1; string reason = 2; }
+
+// ===================== Admin API (canal separado, mTLS + WebAuthn) =====================
+service AdminService {
+  rpc GrantResources (GrantRequest)    returns (AdminResult);
+  rpc DonateResources(GrantRequest)    returns (AdminResult);
+  rpc Sanction       (SanctionRequest) returns (AdminResult);
+  rpc RevokeSanction (RevokeRequest)   returns (AdminResult);
+  rpc GrantRole      (RoleRequest)     returns (AdminResult);
+  rpc RevokeRole     (RoleRequest)     returns (AdminResult);
+  rpc ExpandWorld    (ExpandRequest)   returns (AdminResult);
+  rpc SetServerTier  (TierRequest)     returns (AdminResult);
+  rpc ListReviewQueue(Empty)           returns (ReviewQueue);
+}
+
+message Empty {}
+message GrantRequest    { string request_id = 1; string target_id = 2; string resource = 3; int64 amount = 4; }
+message SanctionRequest { string target_id = 1; string type = 2; int64 duration_sec = 3; string reason = 4; string evidence = 5; }
+message RevokeRequest   { uint64 sanction_id = 1; string reason = 2; }
+message RoleRequest     { string target_id = 1; uint64 permissions = 2; }
+message ExpandRequest   { uint32 rings = 1; }
+message TierRequest     { uint32 tier = 1; }
+message AdminResult     { bool ok = 1; string error = 2; uint64 audit_id = 3; }
+message ReviewItem      { string account_id = 1; int32 score = 2; repeated string detectors = 3; }
+message ReviewQueue     { repeated ReviewItem items = 1; }
